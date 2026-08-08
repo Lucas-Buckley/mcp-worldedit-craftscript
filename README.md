@@ -8,7 +8,7 @@ without you having to hand out credentials.
 It talks to the Minecraft server two ways:
 - **RCON**, for player-agnostic things: craftscript file management, and whispering one-time
   verification codes.
-- A small companion NeoForge mod, **[weditmcpbridge](../worldedit-mcp-bridge-mod)**, for anything
+- A small companion NeoForge mod, **[weditmcpbridge](https://github.com/Lucas-Buckley/worldedit-mcp-bridge-mod)**, for anything
   that needs to act *as a specific player* (running a craftscript, checking a selection, undoing).
 
 ## Why the companion mod is required
@@ -73,7 +73,7 @@ connected and playing.
 
 - Node.js 20+
 - A Minecraft server running WorldEdit 7.3.x, with RCON enabled
-- Java 21 + the [weditmcpbridge](../worldedit-mcp-bridge-mod) mod built and installed (see its own
+- Java 21 + the [weditmcpbridge](https://github.com/Lucas-Buckley/worldedit-mcp-bridge-mod) mod built and installed (see its own
   README) — required for `run_craftscript` / `get_selection_info` / `undo` to work at all
 
 ## Setup
@@ -93,7 +93,7 @@ machine), not from the internet — don't forward `rcon.port` through your route
 
 ### 2. Build and install weditmcpbridge
 
-Follow the [weditmcpbridge README](../worldedit-mcp-bridge-mod/README.md), then restart the
+Follow the [weditmcpbridge README](https://github.com/Lucas-Buckley/worldedit-mcp-bridge-mod), then restart the
 Minecraft server again. Confirm `weditmcpbridge listening on 127.0.0.1:25577` appears in the log.
 
 ### 3. Install and build this server
