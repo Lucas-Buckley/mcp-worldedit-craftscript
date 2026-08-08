@@ -10,7 +10,24 @@ WorldEdit commands run in that player's own session: their active selection is u
 resulting edit lands in *their* `//undo` history, while this server can also trigger `//undo` on
 their behalf.
 
-## How identity works
+## Two entry points
+
+- **`dist/stdio.js`** — for using Claude on *this same machine* (Claude Desktop's "Local MCP
+  servers", or Claude Code's `.mcp.json`). Spawned directly by the client over stdio, fully trusted
+  (whoever can launch a process on this machine already controls it), no identity verification.
+- **`dist/index.js`** — an HTTPS server for *remote* access (other people, other computers). This is
+  where the in-game identity verification below applies.
+
+Use whichever fits — you don't need both, though running the HTTPS one via `run.bat` (for remote
+friends) doesn't conflict with also using the stdio one locally.
+
+> **Note on Claude Desktop's "Connectors" UI:** that dialog appears to route through Anthropic's
+> cloud infrastructure rather than connecting directly from your machine, so it can't reach a
+> `127.0.0.1` server no matter what — a `127.0.0.1` there resolves on Anthropic's servers, not
+> yours. Use "Local MCP servers" (stdio) for local access instead; Connectors may work once this
+> server is genuinely internet-reachable (see remote setup below), but that's untested here.
+
+## How identity works (remote/HTTPS mode only)
 
 There's no admin-distributed password or token to hand out. Instead:
 
@@ -57,6 +74,26 @@ machine), not from the internet — don't forward `rcon.port` through your route
 npm install
 npm run build
 ```
+
+### 2b. Local-only use (same machine)
+
+Add it to Claude Desktop's **Local MCP servers** (Settings → Developer → Edit Config) or Claude
+Code's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "worldedit-craftscript-local": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\path\\to\\mcp-worldedit-craftscript\\dist\\stdio.js"]
+    }
+  }
+}
+```
+
+No `.env`/TLS/RCON-exposure concerns beyond the base RCON setup below — this path never opens a
+network port. Skip straight to "Enable RCON" (step 1) and "Configure environment variables" (step
+3), then you're done; the rest of this README is about the remote/HTTPS path.
 
 ### 3. Configure environment variables
 
@@ -164,8 +201,10 @@ carrying WorldEdit session context on your setup, and this approach won't work w
 
 - Non-admin identities can only act as their own verified username; admins (server ops) can act as
   anyone and manage craftscript files.
-- Every game-touching action re-checks the target account is currently online, even for saved device
-  tokens.
+- `run_craftscript`, `undo`, and `get_selection_info` re-check the target account is currently
+  online on every call, even for saved device tokens. Craftscript file management (inject/list/
+  read/delete) doesn't require anyone to be online — it has no live gameplay effect until a script
+  is actually run.
 - Device tokens (`devices.json`) and the RCON password are plaintext secrets — never commit them.
   `devices.json` and `.env` are gitignored.
 - Deleting a craftscript only removes the file; it has no effect on blocks already placed in-game.

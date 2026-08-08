@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { Config } from "../config.js";
 import { writeCraftscript } from "../craftscriptFs.js";
 import { requireAdmin, type Identity } from "../identity.js";
-import { isPlayerOnline } from "../onlineCheck.js";
 
 export const injectCraftscriptSchema = {
   filename: z.string().describe("Base filename for the script, e.g. 'ellipse_rings'. '.js' is appended automatically."),
@@ -16,11 +15,6 @@ export async function injectCraftscript(
   identity: Identity | null
 ) {
   requireAdmin(identity);
-
-  const online = await isPlayerOnline(config, identity!.username);
-  if (!online) {
-    return { ok: false, reason: `${identity!.username} is not currently online on the server.` };
-  }
 
   const result = await writeCraftscript(config, args.filename, args.source, args.overwrite ?? false);
   return {
