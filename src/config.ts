@@ -14,6 +14,9 @@ export interface Config {
   devicesFile: string;
   tlsCertFile: string | null;
   tlsKeyFile: string | null;
+  bridgeHost: string;
+  bridgePort: number;
+  bridgeTimeoutMs: number;
 }
 
 function requireEnv(name: string): string {
@@ -61,5 +64,8 @@ export function loadConfig(): Config {
     devicesFile: path.resolve(process.env.DEVICES_FILE?.trim() || "devices.json"),
     tlsCertFile: tlsCertFileRaw ? path.resolve(tlsCertFileRaw) : null,
     tlsKeyFile: tlsKeyFileRaw ? path.resolve(tlsKeyFileRaw) : null,
+    bridgeHost: process.env.WEDIT_BRIDGE_HOST?.trim() || "127.0.0.1",
+    bridgePort: intEnv("WEDIT_BRIDGE_PORT", 25577),
+    bridgeTimeoutMs: intEnv("WEDIT_BRIDGE_TIMEOUT_MS", 10000),
   };
 }

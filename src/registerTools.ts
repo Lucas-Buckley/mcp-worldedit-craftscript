@@ -158,7 +158,7 @@ export function registerTools(server: McpServer, config: Config, options: Regist
 
   server.tool(
     "undo",
-    "Undo a player's last N WorldEdit operations on their behalf, via RCON. Non-admin identities " +
+    "Undo a player's last N WorldEdit operations on their behalf. Non-admin identities " +
       "may only undo as their own verified username.",
     undoSchema,
     async (args, extra) => {

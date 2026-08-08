@@ -2,13 +2,34 @@
 
 An MCP (Model Context Protocol) server that lets an MCP client (e.g. Claude) write and run
 [WorldEdit](https://worldedit.enginehub.org/) CraftScripts against a running Minecraft server,
-using a specific player's live selection and undo history — no companion mod required, and
-usable remotely by multiple people without you having to hand out credentials.
+using a specific player's live selection and undo history — usable remotely by multiple people
+without you having to hand out credentials.
 
-It talks to the Minecraft server over **RCON**, using `execute as <player> at <player> run ...` so
-WorldEdit commands run in that player's own session: their active selection is used, and the
-resulting edit lands in *their* `//undo` history, while this server can also trigger `//undo` on
-their behalf.
+It talks to the Minecraft server two ways:
+- **RCON**, for player-agnostic things: craftscript file management, and whispering one-time
+  verification codes.
+- A small companion NeoForge mod, **[weditmcpbridge](../worldedit-mcp-bridge-mod)**, for anything
+  that needs to act *as a specific player* (running a craftscript, checking a selection, undoing).
+
+## Why the companion mod is required
+
+The original design tried to do everything over RCON alone, using
+`execute as <player> at <player> run ...` to make commands act as a specific player. **This does
+not work for WorldEdit.** Confirmed empirically:
+
+- Vanilla `execute as <player>` genuinely does substitute the entity (a `say`/`tell` sent this way
+  correctly shows up as coming from that player) — so RCON's entity substitution itself is fine.
+- But WorldEdit's `//`-prefixed commands (`//size`, `//undo`, etc.) aren't even registered in
+  vanilla's Brigadier command tree — WorldEdit intercepts them via its own chat-handling hook,
+  separate from Brigadier entirely. There is no command string RCON can send that reaches them,
+  regardless of how the source entity is set.
+- Craftscripts (`/cs`, single slash) are similarly unreachable via Brigadier.
+
+`weditmcpbridge` runs inside the same JVM as WorldEdit and dispatches commands through WorldEdit's
+**own** pipeline instead: it wraps a real `ServerPlayer` into a WorldEdit `Actor`
+(`NeoForgeAdapter.adaptPlayer`) and posts a `CommandEvent` to WorldEdit's own event bus — the exact
+path a genuinely typed command takes. WorldEdit then correctly recognizes it as that player, uses
+their live selection, and records the edit in their own undo history.
 
 ## Two entry points
 
@@ -19,13 +40,13 @@ their behalf.
   where the in-game identity verification below applies.
 
 Use whichever fits — you don't need both, though running the HTTPS one via `run.bat` (for remote
-friends) doesn't conflict with also using the stdio one locally.
+friends) doesn't conflict with also using the stdio one locally. Both talk to the same
+`weditmcpbridge` instance for player-scoped actions.
 
 > **Note on Claude Desktop's "Connectors" UI:** that dialog appears to route through Anthropic's
 > cloud infrastructure rather than connecting directly from your machine, so it can't reach a
 > `127.0.0.1` server no matter what — a `127.0.0.1` there resolves on Anthropic's servers, not
-> yours. Use "Local MCP servers" (stdio) for local access instead; Connectors may work once this
-> server is genuinely internet-reachable (see remote setup below), but that's untested here.
+> yours. Use "Local MCP servers" (stdio) for local access instead.
 
 ## How identity works (remote/HTTPS mode only)
 
@@ -43,15 +64,17 @@ There's no admin-distributed password or token to hand out. Instead:
    `Authorization: Bearer <token>` header in that device's MCP client config, and future sessions
    skip the whisper-code step entirely. Verification is a one-time thing per device, not per chat.
 
-Every action that touches the game (`run_craftscript`, `undo`, `get_selection_info`, and the
-craftscript file-management tools) also re-checks that the relevant account is currently online,
-regardless of how identity was established — so a saved device token can't be used to act as
-someone while they aren't actually connected and playing.
+Every action that touches the game (`run_craftscript`, `undo`, `get_selection_info`) also
+re-checks that the relevant account is currently online, regardless of how identity was
+established — so a saved device token can't be used to act as someone while they aren't actually
+connected and playing.
 
 ## Requirements
 
 - Node.js 20+
-- A Minecraft server running WorldEdit, with RCON enabled
+- A Minecraft server running WorldEdit 7.3.x, with RCON enabled
+- Java 21 + the [weditmcpbridge](../worldedit-mcp-bridge-mod) mod built and installed (see its own
+  README) — required for `run_craftscript` / `get_selection_info` / `undo` to work at all
 
 ## Setup
 
@@ -68,14 +91,19 @@ rcon.password=<a strong random password>
 RCON itself only needs to be reachable from the machine running this MCP server (typically the same
 machine), not from the internet — don't forward `rcon.port` through your router.
 
-### 2. Install and build this server
+### 2. Build and install weditmcpbridge
+
+Follow the [weditmcpbridge README](../worldedit-mcp-bridge-mod/README.md), then restart the
+Minecraft server again. Confirm `weditmcpbridge listening on 127.0.0.1:25577` appears in the log.
+
+### 3. Install and build this server
 
 ```bash
 npm install
 npm run build
 ```
 
-### 2b. Local-only use (same machine)
+### 3b. Local-only use (same machine)
 
 Add it to Claude Desktop's **Local MCP servers** (Settings → Developer → Edit Config) or Claude
 Code's `.mcp.json`:
@@ -91,17 +119,16 @@ Code's `.mcp.json`:
 }
 ```
 
-No `.env`/TLS/RCON-exposure concerns beyond the base RCON setup below — this path never opens a
-network port. Skip straight to "Enable RCON" (step 1) and "Configure environment variables" (step
-3), then you're done; the rest of this README is about the remote/HTTPS path.
+Skip straight to "Configure environment variables" below, then you're done; the rest of this
+README is about the remote/HTTPS path.
 
-### 3. Configure environment variables
+### 4. Configure environment variables
 
-Copy `.env.example` to `.env` and fill in the paths for your server. See the table in
-`.env.example` for what each variable does — the key ones are `RCON_PASSWORD`, `CRAFTSCRIPTS_DIR`,
-`OPS_FILE`, and `MCP_HTTP_HOST`/`MCP_HTTP_PORT`.
+Copy `.env.example` to `.env` and fill in the paths for your server, including `WEDIT_BRIDGE_HOST`/
+`WEDIT_BRIDGE_PORT` (defaults `127.0.0.1:25577` — only change if you changed `WEDIT_BRIDGE_PORT` on
+the mod side too).
 
-### 3b. TLS (required by some clients, e.g. Claude Desktop)
+### 4b. TLS (required by some clients, e.g. Claude Desktop)
 
 Some MCP clients only accept `https://` URLs for custom connectors, even for `127.0.0.1`. Generate
 a certificate trusted by this machine using [mkcert](https://github.com/FiloSottile/mkcert):
@@ -116,7 +143,10 @@ Then set `TLS_CERT_FILE`/`TLS_KEY_FILE` in `.env` to those paths. Leave both uns
 HTTP instead (fine for clients that accept `http://`, or when reverse-proxying TLS elsewhere).
 `mkcert -install` modifies your system's trust store, so run it yourself rather than scripting it.
 
-### 4. Run it alongside your Minecraft server
+For a certificate trusted by *other people's* devices too (not just this machine), you need a real
+CA — see "Making it reachable from another computer" below.
+
+### 5. Run it alongside your Minecraft server
 
 If you added the launch line to your server's `run.bat` (see below), it starts and stops
 automatically with the server. Otherwise, run it manually:
@@ -128,7 +158,7 @@ npm start
 It listens on `http(s)://<MCP_HTTP_HOST>:<MCP_HTTP_PORT>/mcp` (default port `8787`; `https` if
 `TLS_CERT_FILE`/`TLS_KEY_FILE` are set).
 
-### 5. Tying it to run.bat
+### 6. Tying it to run.bat
 
 `run.bat` can start this server (minimized, titled `WorldEditMCP`) right before launching the
 Minecraft server, and kill it after the Minecraft server process exits:
@@ -141,7 +171,7 @@ REM ... your existing java launch line ...
 taskkill /FI "WINDOWTITLE eq WorldEditMCP*" /T /F >nul 2>&1
 ```
 
-### 6. Making it reachable from another computer
+### 7. Making it reachable from another computer
 
 **Same machine only:** set `MCP_HTTP_HOST=127.0.0.1` and skip the rest of this section.
 
@@ -154,18 +184,17 @@ taskkill /FI "WINDOWTITLE eq WorldEditMCP*" /T /F >nul 2>&1
   ```
 - **Forward that port on your router** to this machine's LAN IP (router UI, not something scriptable
   from here).
-- Anyone connecting from outside needs the resulting public address (your public IP or a dynamic-DNS
-  hostname) plus `:8787/mcp` as their MCP server URL — no token needed up front, since they verify
-  via the in-game code flow above the first time.
-- This exposes an HTTP(S) endpoint to the internet. It requires identity verification for anything
-  that touches the game, but there's no rate-limiting beyond what's built in.
-- **The mkcert certificate above only makes this machine trust itself** — it won't be trusted by
-  other people's devices, since mkcert's CA is local to this machine. Friends connecting remotely
-  will get a certificate warning/rejection with that setup. For a cert trusted by everyone, you need
-  one from a real CA (e.g. [Let's Encrypt](https://letsencrypt.org/)) tied to a domain/DDNS hostname
-  pointing at your public IP — a bigger step than local-only setup, and out of scope of this README.
-  Until then, remote users may need to accept a cert warning, or you can run this without TLS and
-  put a separate HTTPS-terminating reverse proxy in front of it.
+- Get a stable hostname (e.g. free [DuckDNS](https://duckdns.org)) if your public IP isn't static,
+  plus an updater that keeps it current.
+- Get a certificate trusted by everyone (not just this machine) via a real CA — e.g.
+  [win-acme](https://www.win-acme.com/) + your DDNS provider's DNS-01 validation (if it has an
+  update API, like DuckDNS's `txt=` parameter). This avoids needing port 80 open at all. Point
+  `TLS_CERT_FILE`/`TLS_KEY_FILE` at the issued chain/key `.pem` files, and set up auto-renewal
+  (win-acme registers its own scheduled task — needs to run elevated once) with a post-renewal
+  hook that restarts the MCP server process so it picks up the renewed cert.
+- Anyone connecting from outside needs the resulting public address plus `:8787/mcp` as their MCP
+  server URL — no token needed up front, since they verify via the in-game code flow above the
+  first time.
 
 ## Tools
 
@@ -173,29 +202,33 @@ taskkill /FI "WINDOWTITLE eq WorldEditMCP*" /T /F >nul 2>&1
 | --- | --- | --- |
 | `request_login_code` | none | Whisper a one-time code to an online player |
 | `verify_login_code` | none | Complete verification; returns a persistent device token |
-| `run_craftscript` | own username or admin | Run a craftscript as a player |
-| `get_selection_info` | own username or admin | Check a player's active selection |
-| `undo` | own username or admin | Undo a player's last N WorldEdit operations |
-| `inject_craftscript` | admin (server op) | Write a `.js` craftscript into the craftscripts folder |
+| `run_craftscript` | own username or admin | Run a craftscript as a player (via weditmcpbridge) |
+| `get_selection_info` | own username or admin | Check a player's active selection (via weditmcpbridge) |
+| `undo` | own username or admin | Undo a player's last N WorldEdit operations (via weditmcpbridge) |
+| `inject_craftscript` | admin (server op) | Write a `.js` craftscript into the craftscripts folder (RCON-free, filesystem only) |
 | `list_craftscripts` | admin (server op) | List available craftscripts |
 | `read_craftscript` | admin (server op) | Read back a craftscript's source |
 | `delete_craftscript` | admin (server op) | Delete a craftscript file |
 
+Note: `get_selection_info` can currently only report whether the command succeeded, not the
+selection's actual type/size/coordinates — WorldEdit sends that detail straight to the player's
+own chat, and the bridge doesn't capture chat text yet. Ask the player to check their own chat, or
+have them run `//size` themselves.
+
 ## Validating your setup
 
-Before relying on this for real, confirm with a real player online:
+Confirmed working end-to-end (2026-08-08) with a real player:
 
-1. Basic RCON connectivity (e.g. send `list`).
-2. `execute as <player> run say hi` shows as `<player>: hi` in-game, not `Server: hi`, when sent via RCON.
-3. Call `request_login_code` for that player, confirm they receive the whisper, then `verify_login_code`.
-4. Have the player make a selection and confirm it with their own `/size`; then call `get_selection_info`
-   for that username and confirm the results match.
-5. Inject a trivial test script (as an op), run it via `run_craftscript`, and confirm the edit lands.
-6. Have the player type `//undo` themselves after an MCP-triggered edit — it should undo it. Then test
-   the `undo` tool the same way.
+1. `//size` via the bridge → real selection info appeared in the player's chat.
+2. `/cs <script> <args>` via the bridge → the script actually ran, editing real blocks, with the
+   script's own `context.print()` output appearing in the player's chat.
+3. The player's own `//undo` correctly reversed a bridge-triggered edit.
+4. The `undo` tool (via the bridge) correctly reported "Nothing left to undo" against empty
+   history, and successfully reversed a real edit when there was one.
 
-If selection or undo scoping doesn't match (step 4 or 6 fails), `execute as` over RCON likely isn't
-carrying WorldEdit session context on your setup, and this approach won't work without a companion mod.
+If you're setting this up fresh, re-run this checklist with your own WorldEdit/NeoForge versions —
+command registration details (e.g. which literal `//` vs `/` a given command uses) could differ
+across WorldEdit versions.
 
 ## Security notes
 
@@ -207,11 +240,14 @@ carrying WorldEdit session context on your setup, and this approach won't work w
   is actually run.
 - Device tokens (`devices.json`) and the RCON password are plaintext secrets — never commit them.
   `devices.json` and `.env` are gitignored.
+- `weditmcpbridge`'s TCP endpoint has no authentication of its own and must only ever be bound to
+  `127.0.0.1` — anything that can reach it can act as any online player with full WorldEdit access.
+  It's protected purely by not being network-reachable; don't change that binding.
 - Deleting a craftscript only removes the file; it has no effect on blocks already placed in-game.
 - Exposing this to the internet means anyone can attempt `request_login_code` for any username —
   they can't gain access without reading the whispered code in that player's own chat, but it will
   spam a whisper to real players if abused. There's a cooldown per username, but no broader
-  rate-limiting or TLS.
+  rate-limiting.
 
 ## License
 

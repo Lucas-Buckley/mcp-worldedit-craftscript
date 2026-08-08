@@ -1,9 +1,8 @@
 import { z } from "zod";
 import type { Config } from "../config.js";
-import { buildRunCraftscriptCommand } from "../commandBuilder.js";
-import { sendRconCommand } from "../rcon.js";
+import { assertSafeUsername, buildCraftscriptCommand } from "../commandBuilder.js";
+import { sendBridgeCommand } from "../bridgeClient.js";
 import { currentLogOffset, tailLogSince } from "../logTail.js";
-import { looksSuccessful } from "../responseParsers.js";
 import { requireUsernameScope, type Identity } from "../identity.js";
 import { isPlayerOnline } from "../onlineCheck.js";
 
@@ -19,25 +18,26 @@ export async function runCraftscript(
   identity: Identity | null
 ) {
   requireUsernameScope(identity, args.username);
+  assertSafeUsername(args.username);
 
   const online = await isPlayerOnline(config, args.username);
   if (!online) {
     return { ok: false, reason: `${args.username} is not currently online on the server.` };
   }
 
-  const command = buildRunCraftscriptCommand(args.username, args.script, args.args ?? []);
+  const command = buildCraftscriptCommand(args.script, args.args ?? []);
   const offset = await currentLogOffset(config);
-  const rconResponse = await sendRconCommand(config, command);
+  const bridgeResult = await sendBridgeCommand(config, args.username, command);
 
   let logTail: string | null = null;
-  if (rconResponse.trim().length === 0) {
+  if (bridgeResult.ok) {
     logTail = await tailLogSince(config, offset, args.username);
   }
 
   return {
     commandSent: command,
-    rconResponse,
+    bridgeResult,
     logTail,
-    success: looksSuccessful(rconResponse, logTail),
+    success: bridgeResult.ok,
   };
 }
