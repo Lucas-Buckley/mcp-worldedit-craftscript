@@ -64,6 +64,21 @@ Copy `.env.example` to `.env` and fill in the paths for your server. See the tab
 `.env.example` for what each variable does — the key ones are `RCON_PASSWORD`, `CRAFTSCRIPTS_DIR`,
 `OPS_FILE`, and `MCP_HTTP_HOST`/`MCP_HTTP_PORT`.
 
+### 3b. TLS (required by some clients, e.g. Claude Desktop)
+
+Some MCP clients only accept `https://` URLs for custom connectors, even for `127.0.0.1`. Generate
+a certificate trusted by this machine using [mkcert](https://github.com/FiloSottile/mkcert):
+
+```bash
+mkcert -install   # one-time: adds a local CA to your OS trust store — run this yourself
+mkdir certs
+mkcert -cert-file certs/localhost-cert.pem -key-file certs/localhost-key.pem 127.0.0.1 localhost
+```
+
+Then set `TLS_CERT_FILE`/`TLS_KEY_FILE` in `.env` to those paths. Leave both unset to serve plain
+HTTP instead (fine for clients that accept `http://`, or when reverse-proxying TLS elsewhere).
+`mkcert -install` modifies your system's trust store, so run it yourself rather than scripting it.
+
 ### 4. Run it alongside your Minecraft server
 
 If you added the launch line to your server's `run.bat` (see below), it starts and stops
@@ -73,7 +88,8 @@ automatically with the server. Otherwise, run it manually:
 npm start
 ```
 
-It listens on `http://<MCP_HTTP_HOST>:<MCP_HTTP_PORT>/mcp` (default port `8787`).
+It listens on `http(s)://<MCP_HTTP_HOST>:<MCP_HTTP_PORT>/mcp` (default port `8787`; `https` if
+`TLS_CERT_FILE`/`TLS_KEY_FILE` are set).
 
 ### 5. Tying it to run.bat
 
@@ -104,9 +120,15 @@ taskkill /FI "WINDOWTITLE eq WorldEditMCP*" /T /F >nul 2>&1
 - Anyone connecting from outside needs the resulting public address (your public IP or a dynamic-DNS
   hostname) plus `:8787/mcp` as their MCP server URL — no token needed up front, since they verify
   via the in-game code flow above the first time.
-- This exposes an HTTP endpoint to the internet. It requires identity verification for anything that
-  touches the game, but there's no rate-limiting beyond what's built in and no TLS — consider a
-  reverse proxy with HTTPS if you want request encryption in transit.
+- This exposes an HTTP(S) endpoint to the internet. It requires identity verification for anything
+  that touches the game, but there's no rate-limiting beyond what's built in.
+- **The mkcert certificate above only makes this machine trust itself** — it won't be trusted by
+  other people's devices, since mkcert's CA is local to this machine. Friends connecting remotely
+  will get a certificate warning/rejection with that setup. For a cert trusted by everyone, you need
+  one from a real CA (e.g. [Let's Encrypt](https://letsencrypt.org/)) tied to a domain/DDNS hostname
+  pointing at your public IP — a bigger step than local-only setup, and out of scope of this README.
+  Until then, remote users may need to accept a cert warning, or you can run this without TLS and
+  put a separate HTTPS-terminating reverse proxy in front of it.
 
 ## Tools
 

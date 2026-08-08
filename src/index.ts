@@ -1,5 +1,7 @@
 import "dotenv/config";
 import http from "node:http";
+import https from "node:https";
+import fs from "node:fs";
 import crypto from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -225,7 +227,7 @@ async function handleMcpRequest(req: http.IncomingMessage, res: http.ServerRespo
 }
 
 async function main() {
-  const httpServer = http.createServer((req, res) => {
+  const requestHandler: http.RequestListener = (req, res) => {
     if (req.url !== "/mcp") {
       sendJson(res, 404, { error: "Not found. POST to /mcp." });
       return;
@@ -234,10 +236,19 @@ async function main() {
       console.error("Error handling MCP request:", err);
       if (!res.headersSent) sendJson(res, 500, { error: "Internal server error." });
     });
-  });
+  };
+
+  const useTls = !!(config.tlsCertFile && config.tlsKeyFile);
+  const httpServer = useTls
+    ? https.createServer(
+        { cert: fs.readFileSync(config.tlsCertFile!), key: fs.readFileSync(config.tlsKeyFile!) },
+        requestHandler
+      )
+    : http.createServer(requestHandler);
 
   httpServer.listen(config.httpPort, config.httpHost, () => {
-    console.log(`worldedit-craftscript MCP server listening on http://${config.httpHost}:${config.httpPort}/mcp`);
+    const scheme = useTls ? "https" : "http";
+    console.log(`worldedit-craftscript MCP server listening on ${scheme}://${config.httpHost}:${config.httpPort}/mcp`);
     console.log(`Devices file: ${config.devicesFile}`);
     console.log(`Ops file: ${config.opsFile}`);
   });

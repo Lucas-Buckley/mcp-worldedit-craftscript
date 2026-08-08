@@ -12,6 +12,8 @@ export interface Config {
   httpPort: number;
   opsFile: string;
   devicesFile: string;
+  tlsCertFile: string | null;
+  tlsKeyFile: string | null;
 }
 
 function requireEnv(name: string): string {
@@ -37,6 +39,12 @@ function intEnv(name: string, fallback: number): number {
 export function loadConfig(): Config {
   const craftscriptsDir = path.resolve(requireEnv("CRAFTSCRIPTS_DIR"));
   const serverLogPathRaw = process.env.SERVER_LOG_PATH;
+  const tlsCertFileRaw = process.env.TLS_CERT_FILE?.trim();
+  const tlsKeyFileRaw = process.env.TLS_KEY_FILE?.trim();
+
+  if (!!tlsCertFileRaw !== !!tlsKeyFileRaw) {
+    throw new Error("TLS_CERT_FILE and TLS_KEY_FILE must both be set, or both left unset.");
+  }
 
   return {
     rconHost: process.env.RCON_HOST?.trim() || "127.0.0.1",
@@ -51,5 +59,7 @@ export function loadConfig(): Config {
     httpPort: intEnv("MCP_HTTP_PORT", 8787),
     opsFile: path.resolve(requireEnv("OPS_FILE")),
     devicesFile: path.resolve(process.env.DEVICES_FILE?.trim() || "devices.json"),
+    tlsCertFile: tlsCertFileRaw ? path.resolve(tlsCertFileRaw) : null,
+    tlsKeyFile: tlsKeyFileRaw ? path.resolve(tlsKeyFileRaw) : null,
   };
 }
