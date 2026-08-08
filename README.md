@@ -43,31 +43,51 @@ Use whichever fits — you don't need both, though running the HTTPS one via `ru
 friends) doesn't conflict with also using the stdio one locally. Both talk to the same
 `weditmcpbridge` instance for player-scoped actions.
 
-> **Note on Claude Desktop's "Connectors" UI:** that dialog appears to route through Anthropic's
-> cloud infrastructure rather than connecting directly from your machine, so it can't reach a
-> `127.0.0.1` server no matter what — a `127.0.0.1` there resolves on Anthropic's servers, not
-> yours. Use "Local MCP servers" (stdio) for local access instead.
+> **Note on Claude Desktop's "Connectors" UI:** that dialog requires the server to support OAuth
+> (it does a discovery/registration handshake before ever calling `/mcp`) — this server implements
+> a minimal OAuth authorization server for exactly that case (see below). Note also that
+> `127.0.0.1` won't work there even with OAuth working — Connectors appears to route through
+> Anthropic's cloud, so a loopback address resolves on their servers, not yours. Use a real
+> reachable address (see "Making it reachable from another computer"), or "Local MCP servers"
+> (stdio) for same-machine use.
 
 ## How identity works (remote/HTTPS mode only)
 
-There's no admin-distributed password or token to hand out. Instead:
+There's no admin-distributed password to hand out — every path ends at the same in-game
+whisper-code verification, just reached two different ways depending on what your MCP client
+supports.
+
+**Path A — MCP tools** (Claude Code, or any client that lets you add a `headers` field to a URL-based
+server config):
 
 1. Someone tells Claude their Minecraft username.
 2. Claude calls `request_login_code` — the server checks they're actually online right now, then
-   privately whispers them a one-time code in-game (`/tell <player> your code is ...`). Only
-   someone actually logged into and playing as that account can see it (the server has
-   `online-mode=true`, so Mojang has already verified who that account really is).
-3. They read the code out, Claude calls `verify_login_code` with it.
-4. That chat session is now authenticated as that player. If the player is listed in the server's
-   `ops.json`, they also get admin access (managing craftscript files, acting as any player).
+   privately whispers them a one-time code in-game as a clickable, colored chat message (server
+   has `online-mode=true`, so Mojang has already verified who that account really is).
+3. They read/copy the code, Claude calls `verify_login_code` with it.
+4. That chat session is now authenticated as that player. If they're listed in `ops.json`, they
+   also get admin access.
 5. `verify_login_code` also returns a **device token** — add it as a permanent
-   `Authorization: Bearer <token>` header in that device's MCP client config, and future sessions
-   skip the whisper-code step entirely. Verification is a one-time thing per device, not per chat.
+   `Authorization: Bearer <token>` header (or `?token=<token>` in the URL, for clients that only
+   let you enter a URL with no headers field) in that device's MCP client config, and future
+   sessions skip the whisper-code step entirely.
 
-Every action that touches the game (`run_craftscript`, `undo`, `get_selection_info`) also
-re-checks that the relevant account is currently online, regardless of how identity was
-established — so a saved device token can't be used to act as someone while they aren't actually
-connected and playing.
+**Path B — OAuth** (Claude Desktop's "Connectors", or any client that does an OAuth handshake
+before calling `/mcp`):
+
+1. The client auto-discovers this server's OAuth endpoints (`/.well-known/oauth-authorization-server`)
+   and dynamically registers itself (`/oauth/register`).
+2. It opens `/oauth/authorize` in a browser — a small page asking for a Minecraft username, then
+   the same whisper-code verification as Path A, just through a web form instead of MCP tool calls.
+3. On success it redirects back to the client with an authorization code, which the client
+   exchanges at `/oauth/token` for an access token.
+4. That access token **is** a device token under the hood — same file, same semantics, same
+   per-request online-check — Path A and Path B end up in exactly the same place.
+
+Every action that touches the game (`run_craftscript`, `undo`, `get_selection_info`) re-checks
+that the relevant account is currently online on every call, regardless of how identity was
+established — so a saved device/access token can't be used to act as someone while they aren't
+actually connected and playing.
 
 ## Requirements
 
@@ -238,8 +258,13 @@ across WorldEdit versions.
   online on every call, even for saved device tokens. Craftscript file management (inject/list/
   read/delete) doesn't require anyone to be online — it has no live gameplay effect until a script
   is actually run.
-- Device tokens (`devices.json`) and the RCON password are plaintext secrets — never commit them.
-  `devices.json` and `.env` are gitignored.
+- Device tokens (`devices.json`), OAuth client registrations (`oauth-clients.json`), and the RCON
+  password are plaintext secrets/state — never commit them. All are gitignored.
+- The OAuth `/oauth/*` endpoints let *anyone* who can reach this server register a client and start
+  an authorization flow — that's normal for public OAuth clients (no secret required, matching the
+  spec for native apps using PKCE), and the flow still ends at the same online-player whisper-code
+  check as everywhere else. Registering a client costs nothing by itself; only completing
+  verification for a real, currently-online account yields a usable token.
 - `weditmcpbridge`'s TCP endpoint has no authentication of its own and must only ever be bound to
   `127.0.0.1` — anything that can reach it can act as any online player with full WorldEdit access.
   It's protected purely by not being network-reachable; don't change that binding.

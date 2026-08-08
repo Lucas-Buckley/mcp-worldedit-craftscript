@@ -10,23 +10,52 @@ import { findDevice } from "./deviceStore.js";
 import { getSessionIdentity, bindSession, unbindSession } from "./sessionIdentity.js";
 import type { Identity } from "./identity.js";
 import { registerTools } from "./registerTools.js";
+import {
+  handleWellKnownAuthorizationServer,
+  handleWellKnownProtectedResource,
+  handleRegister,
+  handleAuthorizeGet,
+  handleAuthorizeSendCode,
+  handleAuthorizeComplete,
+  handleToken,
+} from "./oauth.js";
 
 const config = loadConfig();
 
-/** One shared McpServer (tool definitions are stateless); each session gets its own transport. */
-const mcpServer = new McpServer({ name: "worldedit-craftscript", version: "0.1.0" });
-registerTools(mcpServer, config, {
-  resolveIdentity: (extra) => getSessionIdentity(extra.sessionId),
-  includeVerificationTools: true,
-});
+/**
+ * Builds a fresh McpServer for a new session. The underlying SDK's Server can only be
+ * connected to one Transport at a time — reusing a single McpServer across sessions throws
+ * "Already connected to a transport" on every session after the first, so each session gets
+ * its own instance (registerTools is cheap; tool logic itself is stateless).
+ */
+function buildMcpServer(): McpServer {
+  const server = new McpServer({ name: "worldedit-craftscript", version: "0.1.0" });
+  registerTools(server, config, {
+    resolveIdentity: (extra) => getSessionIdentity(extra.sessionId),
+    includeVerificationTools: true,
+  });
+  return server;
+}
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
-function resolveHeaderIdentity(req: http.IncomingMessage): Identity | null {
+/**
+ * Resolves identity from either an `Authorization: Bearer <token>` header (the normal path)
+ * or a `?token=<token>` query parameter — a fallback for MCP clients whose UI only lets you
+ * enter a single URL with no way to add custom headers (e.g. Claude Desktop's Connectors).
+ */
+function resolveRequestIdentity(req: http.IncomingMessage): Identity | null {
   const authHeader = req.headers.authorization ?? "";
-  const match = /^Bearer\s+(.+)$/i.exec(authHeader);
-  if (!match) return null;
-  const device = findDevice(config.devicesFile, match[1].trim());
+  const headerMatch = /^Bearer\s+(.+)$/i.exec(authHeader);
+  let token = headerMatch?.[1]?.trim();
+
+  if (!token && req.url) {
+    const url = new URL(req.url, "http://internal");
+    token = url.searchParams.get("token") ?? undefined;
+  }
+
+  if (!token) return null;
+  const device = findDevice(config.devicesFile, token);
   if (!device) return null;
   return { username: device.username, admin: device.admin };
 }
@@ -38,13 +67,13 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 async function handleMcpRequest(req: http.IncomingMessage, res: http.ServerResponse) {
-  const headerIdentity = resolveHeaderIdentity(req);
+  const headerIdentity = resolveRequestIdentity(req);
   const existingSessionId = req.headers["mcp-session-id"];
   const sessionIdHeader = Array.isArray(existingSessionId) ? existingSessionId[0] : existingSessionId;
 
   if (sessionIdHeader && transports.has(sessionIdHeader)) {
-    // Existing session: re-bind identity from the header on every request so a saved
-    // device token keeps working even if this server process restarted (in-memory
+    // Existing session: re-bind identity from the header/query token on every request so a
+    // saved device token keeps working even if this server process restarted (in-memory
     // session bindings from verify_login_code don't survive a restart; the token does).
     if (headerIdentity) bindSession(sessionIdHeader, headerIdentity);
     await transports.get(sessionIdHeader)!.handleRequest(req, res);
@@ -70,7 +99,7 @@ async function handleMcpRequest(req: http.IncomingMessage, res: http.ServerRespo
       unbindSession(transport.sessionId);
     }
   };
-  await mcpServer.connect(transport);
+  await buildMcpServer().connect(transport);
   await transport.handleRequest(req, res);
 }
 
@@ -87,6 +116,23 @@ function applyCors(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
 }
 
+type RouteHandler = (req: http.IncomingMessage, res: http.ServerResponse, config: ReturnType<typeof loadConfig>) => Promise<void>;
+
+const asAsync =
+  (fn: (req: http.IncomingMessage, res: http.ServerResponse, config: ReturnType<typeof loadConfig>) => void): RouteHandler =>
+  async (req, res, cfg) =>
+    fn(req, res, cfg);
+
+const ROUTES: { method: string; path: string; handler: RouteHandler }[] = [
+  { method: "GET", path: "/.well-known/oauth-authorization-server", handler: asAsync(handleWellKnownAuthorizationServer) },
+  { method: "GET", path: "/.well-known/oauth-protected-resource", handler: asAsync(handleWellKnownProtectedResource) },
+  { method: "POST", path: "/oauth/register", handler: handleRegister },
+  { method: "GET", path: "/oauth/authorize", handler: asAsync(handleAuthorizeGet) },
+  { method: "POST", path: "/oauth/authorize/send-code", handler: handleAuthorizeSendCode },
+  { method: "POST", path: "/oauth/authorize/complete", handler: handleAuthorizeComplete },
+  { method: "POST", path: "/oauth/token", handler: handleToken },
+];
+
 async function main() {
   const requestHandler: http.RequestListener = (req, res) => {
     applyCors(req, res);
@@ -96,7 +142,18 @@ async function main() {
       return;
     }
 
-    if (req.url !== "/mcp") {
+    const pathname = req.url ? new URL(req.url, "http://internal").pathname : "";
+
+    const route = ROUTES.find((r) => r.method === req.method && r.path === pathname);
+    if (route) {
+      route.handler(req, res, config).catch((err) => {
+        console.error(`Error handling ${pathname}:`, err);
+        if (!res.headersSent) sendJson(res, 500, { error: "Internal server error." });
+      });
+      return;
+    }
+
+    if (pathname !== "/mcp") {
       sendJson(res, 404, { error: "Not found. POST to /mcp." });
       return;
     }

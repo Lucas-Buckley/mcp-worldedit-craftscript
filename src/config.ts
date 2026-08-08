@@ -17,6 +17,7 @@ export interface Config {
   bridgeHost: string;
   bridgePort: number;
   bridgeTimeoutMs: number;
+  oauthClientsFile: string;
 }
 
 function requireEnv(name: string): string {
@@ -67,5 +68,6 @@ export function loadConfig(): Config {
     bridgeHost: process.env.WEDIT_BRIDGE_HOST?.trim() || "127.0.0.1",
     bridgePort: intEnv("WEDIT_BRIDGE_PORT", 25577),
     bridgeTimeoutMs: intEnv("WEDIT_BRIDGE_TIMEOUT_MS", 10000),
+    oauthClientsFile: path.resolve(process.env.OAUTH_CLIENTS_FILE?.trim() || "oauth-clients.json"),
   };
 }
