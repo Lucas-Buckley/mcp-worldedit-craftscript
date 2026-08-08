@@ -55,6 +55,35 @@ export function buildTellCommand(username: string, message: string): string {
   return `tell ${username} ${safeMessage}`;
 }
 
+/**
+ * Whispers a verification code as a clickable/hoverable chat component: click-to-copy plus a
+ * hover tooltip, styled distinctly (bold gold) so it's visually obvious it's interactive.
+ * Uses `tellraw` (JSON text components), since plain `tell` can't carry click/hover behavior.
+ */
+export function buildVerificationCodeTellrawCommand(username: string, code: string): string {
+  assertSafeUsername(username);
+  if (!/^[0-9]+$/.test(code)) {
+    throw new Error(`Invalid verification code: ${JSON.stringify(code)}`);
+  }
+
+  const components = [
+    "",
+    { text: "[MCP] ", color: "gray" },
+    { text: "Your verification code: ", color: "gray" },
+    {
+      text: code,
+      color: "gold",
+      bold: true,
+      underlined: true,
+      clickEvent: { action: "copy_to_clipboard", value: code },
+      hoverEvent: { action: "show_text", value: "Click to copy" },
+    },
+    { text: " (expires in 2 minutes). Give it to Claude to link this device to your account.", color: "gray" },
+  ];
+
+  return `tellraw ${username} ${JSON.stringify(components)}`;
+}
+
 export function buildListCommand(): string {
   return "list";
 }

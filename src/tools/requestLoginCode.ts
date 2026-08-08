@@ -3,7 +3,7 @@ import type { Config } from "../config.js";
 import { isPlayerOnline } from "../onlineCheck.js";
 import { canRequestCode, issueCode } from "../loginCodes.js";
 import { sendRconCommand } from "../rcon.js";
-import { buildTellCommand } from "../commandBuilder.js";
+import { buildVerificationCodeTellrawCommand } from "../commandBuilder.js";
 
 export const requestLoginCodeSchema = {
   username: z.string().describe("The Minecraft username to verify. They must be online on the server right now."),
@@ -26,10 +26,7 @@ export async function requestLoginCode(config: Config, args: { username: string 
   }
 
   const code = issueCode(args.username);
-  const command = buildTellCommand(
-    args.username,
-    `[MCP] Your verification code is ${code}. It expires in 2 minutes. Give it to Claude to link this device to your account.`
-  );
+  const command = buildVerificationCodeTellrawCommand(args.username, code);
   await sendRconCommand(config, command);
 
   return {
