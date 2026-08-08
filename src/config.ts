@@ -8,6 +8,10 @@ export interface Config {
   serverLogPath: string | null;
   rconTimeoutMs: number;
   logTailTimeoutMs: number;
+  httpHost: string;
+  httpPort: number;
+  opsFile: string;
+  devicesFile: string;
 }
 
 function requireEnv(name: string): string {
@@ -42,5 +46,10 @@ export function loadConfig(): Config {
     serverLogPath: serverLogPathRaw ? path.resolve(serverLogPathRaw) : null,
     rconTimeoutMs: intEnv("RCON_TIMEOUT_MS", 5000),
     logTailTimeoutMs: intEnv("LOG_TAIL_TIMEOUT_MS", 3000),
+    // 0.0.0.0 so it's reachable from your router's port-forwarded WAN traffic, not just localhost.
+    httpHost: process.env.MCP_HTTP_HOST?.trim() || "0.0.0.0",
+    httpPort: intEnv("MCP_HTTP_PORT", 8787),
+    opsFile: path.resolve(requireEnv("OPS_FILE")),
+    devicesFile: path.resolve(process.env.DEVICES_FILE?.trim() || "devices.json"),
   };
 }

@@ -4,6 +4,8 @@ import { buildRunCraftscriptCommand } from "../commandBuilder.js";
 import { sendRconCommand } from "../rcon.js";
 import { currentLogOffset, tailLogSince } from "../logTail.js";
 import { looksSuccessful } from "../responseParsers.js";
+import { requireUsernameScope, type Identity } from "../identity.js";
+import { isPlayerOnline } from "../onlineCheck.js";
 
 export const runCraftscriptSchema = {
   username: z.string().describe("In-game username of the player to run the script as. Must have an active WorldEdit selection if the script needs one."),
@@ -13,8 +15,16 @@ export const runCraftscriptSchema = {
 
 export async function runCraftscript(
   config: Config,
-  args: { username: string; script: string; args?: string[] }
+  args: { username: string; script: string; args?: string[] },
+  identity: Identity | null
 ) {
+  requireUsernameScope(identity, args.username);
+
+  const online = await isPlayerOnline(config, args.username);
+  if (!online) {
+    return { ok: false, reason: `${args.username} is not currently online on the server.` };
+  }
+
   const command = buildRunCraftscriptCommand(args.username, args.script, args.args ?? []);
   const offset = await currentLogOffset(config);
   const rconResponse = await sendRconCommand(config, command);

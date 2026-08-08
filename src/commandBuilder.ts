@@ -37,3 +37,15 @@ export function buildUndoCommand(username: string, times: number): string {
   const n = Math.max(1, Math.floor(times));
   return `execute as ${username} at ${username} run worldedit:undo ${n}`;
 }
+
+export function buildTellCommand(username: string, message: string): string {
+  assertSafeUsername(username);
+  // `tell` consumes the rest of the line as the message, so no quoting — just strip
+  // anything that could be read as a line break or otherwise escape the message argument.
+  const safeMessage = message.replace(/[\r\n]/g, " ");
+  return `tell ${username} ${safeMessage}`;
+}
+
+export function buildListCommand(): string {
+  return "list";
+}
