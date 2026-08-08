@@ -43,13 +43,17 @@ Use whichever fits — you don't need both, though running the HTTPS one via `ru
 friends) doesn't conflict with also using the stdio one locally. Both talk to the same
 `weditmcpbridge` instance for player-scoped actions.
 
-> **Note on Claude Desktop's "Connectors" UI:** that dialog requires the server to support OAuth
-> (it does a discovery/registration handshake before ever calling `/mcp`) — this server implements
-> a minimal OAuth authorization server for exactly that case (see below). Note also that
-> `127.0.0.1` won't work there even with OAuth working — Connectors appears to route through
-> Anthropic's cloud, so a loopback address resolves on their servers, not yours. Use a real
-> reachable address (see "Making it reachable from another computer"), or "Local MCP servers"
-> (stdio) for same-machine use.
+> **Note on Claude Desktop's "Connectors" UI:** getting this working took three separate fixes:
+> 1. It requires the server to support OAuth (does a discovery/registration handshake before ever
+>    calling `/mcp`) — this server implements a minimal OAuth authorization server for that (see
+>    below).
+> 2. `127.0.0.1` never works there — Connectors routes through Anthropic's cloud, so a loopback
+>    address resolves on their servers, not yours. Use a real reachable address.
+> 3. **It only connects to standard port 443** — a custom port (we originally used `8787`) never
+>    gets reached at all, even though the exact same URL works fine for direct HTTP clients and
+>    Claude Code. Confirmed by switching `MCP_HTTP_PORT` to `443`.
+>
+> For same-machine use, skip all of this — use "Local MCP servers" (stdio) instead.
 
 ## How identity works (remote/HTTPS mode only)
 
@@ -175,8 +179,9 @@ automatically with the server. Otherwise, run it manually:
 npm start
 ```
 
-It listens on `http(s)://<MCP_HTTP_HOST>:<MCP_HTTP_PORT>/mcp` (default port `8787`; `https` if
-`TLS_CERT_FILE`/`TLS_KEY_FILE` are set).
+It listens on `http(s)://<MCP_HTTP_HOST>:<MCP_HTTP_PORT>/mcp` (`https` if `TLS_CERT_FILE`/
+`TLS_KEY_FILE` are set). **Use port `443`** if you want Claude Desktop's Connectors to be able to
+reach it — see the Connectors note above.
 
 ### 6. Tying it to run.bat
 
@@ -197,10 +202,12 @@ taskkill /FI "WINDOWTITLE eq WorldEditMCP*" /T /F >nul 2>&1
 
 **Over the internet:**
 - Keep `MCP_HTTP_HOST=0.0.0.0` so it accepts connections from your router, not just localhost.
+- Set `MCP_HTTP_PORT=443` — required for Claude Desktop's Connectors (see the note above); any
+  port works for direct HTTP clients or Claude Code, but 443 is the safe default.
 - **Open a Windows Firewall inbound rule** for `MCP_HTTP_PORT` yourself (this changes a security
   setting, so it's not something this project does for you):
   ```powershell
-  New-NetFirewallRule -DisplayName "WorldEdit MCP" -Direction Inbound -Protocol TCP -LocalPort 8787 -Action Allow
+  New-NetFirewallRule -DisplayName "WorldEdit MCP" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
   ```
 - **Forward that port on your router** to this machine's LAN IP (router UI, not something scriptable
   from here).
@@ -212,9 +219,9 @@ taskkill /FI "WINDOWTITLE eq WorldEditMCP*" /T /F >nul 2>&1
   `TLS_CERT_FILE`/`TLS_KEY_FILE` at the issued chain/key `.pem` files, and set up auto-renewal
   (win-acme registers its own scheduled task — needs to run elevated once) with a post-renewal
   hook that restarts the MCP server process so it picks up the renewed cert.
-- Anyone connecting from outside needs the resulting public address plus `:8787/mcp` as their MCP
+- Anyone connecting from outside needs the resulting public address plus `/mcp` as their MCP
   server URL — no token needed up front, since they verify via the in-game code flow above the
-  first time.
+  first time (or the OAuth flow, for Connectors).
 
 ## Tools
 
